@@ -1,4 +1,5 @@
 import service from "@/http";
+import { httpClient } from "@/utils/httpClient";
 
 export const ChatApi = {
   Chat: "/chat/stream",
@@ -14,10 +15,10 @@ export interface ChatMessage {
 
 // 发送消息接口
 export const sendChatMessageApi = async (message: string): Promise<Response> => {
-  return fetch(`${service.defaults.baseURL}${ChatApi.Chat}?message=${encodeURIComponent(message)}`);
+  return httpClient.get(ChatApi.Chat, { message });
 };
 
 // 发送RAG消息接口
 export const sendRagChatMessageApi = async (message: string): Promise<Response> => {
-  return fetch(`${service.defaults.baseURL}${ChatApi.RagChat}?message=${encodeURIComponent(message)}`);
+  return httpClient.get(ChatApi.RagChat, { message });
 };

@@ -1,11 +1,27 @@
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 import {BASE_URL} from "@/http/config.ts";
+
 class FatalError extends Error {}
 class RetriableError extends Error {}
 
 type ResultCallBack = (e: any | null) => void;
 
 const BaseUrl = BASE_URL;
+
+// 获取认证头的工具函数
+const getAuthHeaders = (): Record<string, string> => {
+  const token = localStorage.getItem('token');
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  
+  return headers;
+};
+
 export const postStreamChat = (
     author: string,
     onMessage: ResultCallBack,
@@ -13,11 +29,10 @@ export const postStreamChat = (
     onClose: ResultCallBack
 ) => {
     const ctrl = new AbortController();
+    
     fetchEventSource(BaseUrl + "/post-chat", {
         method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-        },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
             author: author,
         }),
@@ -52,11 +67,10 @@ export const getStreamChat = (
     onClose: ResultCallBack
 ) => {
     const ctrl = new AbortController();
+    
     fetchEventSource(BaseUrl + "/chat/stream?message=" + message, {
         method: "GET",
-        headers: {
-            "Content-Type": "application/json",
-        },
+        headers: getAuthHeaders(),
         body: null,
         signal: ctrl.signal,
         onmessage: onMessage,
