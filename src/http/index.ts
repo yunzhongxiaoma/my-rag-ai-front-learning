@@ -1,9 +1,11 @@
 import axios from "axios";
 import { BASE_URL, HEADER } from "./config";
+import { ElMessage } from "element-plus";
+import router from "@/router";
 
 const service = axios.create({
   baseURL: BASE_URL,
-  //   timeout: 10000,
+  timeout: 10000,
   withCredentials: false,
   headers: HEADER,
 });
@@ -20,8 +22,7 @@ service.interceptors.request.use(
     return config;
   },
   (error) => {
-    console.log(error);
-
+    console.error("请求拦截器错误:", error);
     return Promise.reject(error);
   }
 );
@@ -32,9 +33,48 @@ service.interceptors.response.use(
     return res.data;
   },
   (error) => {
+    console.error("响应拦截器错误:", error);
+    
     let message = "";
-    console.log(error);
-    return Promise.reject(message);
+    const status = error.response?.status;
+    
+    switch (status) {
+      case 401:
+        message = "登录已过期，请重新登录";
+        // 清除本地存储的认证信息
+        localStorage.removeItem("token");
+        localStorage.removeItem("userRole");
+        localStorage.removeItem("userId");
+        
+        // 显示提示信息
+        ElMessage.error(message);
+        
+        // 跳转到登录页面
+        router.push("/login");
+        break;
+        
+      case 403:
+        message = "权限不足，无法访问";
+        ElMessage.error(message);
+        break;
+        
+      case 404:
+        message = "请求的资源不存在";
+        ElMessage.error(message);
+        break;
+        
+      case 500:
+        message = "服务器内部错误";
+        ElMessage.error(message);
+        break;
+        
+      default:
+        message = error.response?.data?.message || error.message || "请求失败";
+        ElMessage.error(message);
+        break;
+    }
+    
+    return Promise.reject(error);
   }
 );
 

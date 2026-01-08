@@ -1,5 +1,7 @@
 import { fetchEventSource } from "@microsoft/fetch-event-source";
-import {BASE_URL} from "@/http/config.ts";
+import { BASE_URL } from "@/http/config.ts";
+import { ElMessage } from "element-plus";
+import router from "@/router";
 
 class FatalError extends Error {}
 class RetriableError extends Error {}
@@ -20,6 +22,20 @@ const getAuthHeaders = (): Record<string, string> => {
   }
   
   return headers;
+};
+
+// 处理401错误的工具函数
+const handle401Error = () => {
+  // 清除本地存储的认证信息
+  localStorage.removeItem("token");
+  localStorage.removeItem("userRole");
+  localStorage.removeItem("userId");
+  
+  // 显示提示信息
+  ElMessage.error("登录已过期，请重新登录");
+  
+  // 跳转到登录页面
+  router.push("/login");
 };
 
 export const postStreamChat = (
@@ -47,6 +63,9 @@ export const postStreamChat = (
         onopen: async (response: any) => {
             if (response.ok) {
                 return;
+            } else if (response.status === 401) {
+                handle401Error();
+                throw new FatalError();
             } else if (
                 response.status >= 400 &&
                 response.status < 500 &&
@@ -83,6 +102,9 @@ export const getStreamChat = (
         onopen: async (response: any) => {
             if (response.ok) {
                 return;
+            } else if (response.status === 401) {
+                handle401Error();
+                throw new FatalError();
             } else if (
                 response.status >= 400 &&
                 response.status < 500 &&

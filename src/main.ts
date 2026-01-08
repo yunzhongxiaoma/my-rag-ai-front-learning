@@ -15,6 +15,10 @@ import "highlight.js/styles/atom-one-light.css"; //样式
 
 // 导入JWT认证测试工具（开发环境）
 if (import.meta.env.DEV) {
+  import('@/utils/authTest');
+  import('@/utils/corsTest');
+}
+if (import.meta.env.DEV) {
   import("@/utils/authTest");
 }
 

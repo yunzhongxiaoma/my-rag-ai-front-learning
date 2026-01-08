@@ -36,7 +36,8 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import {BASE_URL} from "@/http/config.ts";
+import { BASE_URL } from "@/http/config.ts";
+import { fetchWithAuth } from '@/utils/fetchWrapper'
 
 const prompt = ref('')
 const generatedImage = ref('')
@@ -48,7 +49,7 @@ const generateImage = async () => {
   
   isLoading.value = true
   try {
-    const response = await fetch(BASE_URL+`/draw/image?prompt=${encodeURIComponent(prompt.value)}`)
+    const response = await fetchWithAuth(BASE_URL+`/draw/image?prompt=${encodeURIComponent(prompt.value)}`)
     if (response.ok) {
       const blob = await response.blob()
       generatedImage.value = URL.createObjectURL(blob)

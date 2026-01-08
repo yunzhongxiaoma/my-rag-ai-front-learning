@@ -11,12 +11,11 @@ let routes = [
   {
     path: "/login",
     name: "login",
-    component: () => import("@/view/login/RegisterLoginView.vue"),
+    component: () => import("@/view/login/LoginPage.vue"),
     meta: {
-      isMenu: true,
-      requiresAuth: false,
-      description: "个人中心",
-      icon: "Avatar",
+      isMenu: false, // 登录页面不在菜单中显示
+      requiresAuth: false, // 登录页面不需要认证
+      description: "用户登录",
     },
   },
   {
@@ -49,6 +48,17 @@ let routes = [
       isMenu: true,
       description: "我的知识库",
       icon: "Collection",
+      requiresAuth: true,
+    },
+  },
+  {
+    path: "/user-profile",
+    name: "userProfile",
+    component: () => import("@/view/user/UserProfileView.vue"),
+    meta: {
+      isMenu: true,
+      description: "个人中心",
+      icon: "Avatar",
       requiresAuth: true,
     },
   },

@@ -1,5 +1,7 @@
 // JWT认证测试工具
 import { httpClient } from './httpClient';
+import { fetchWithAuthJSON } from './fetchWrapper';
+import { BASE_URL } from '@/http/config';
 
 export const testJWTAuth = async () => {
   console.log('=== JWT认证测试开始 ===');
@@ -13,41 +15,54 @@ export const testJWTAuth = async () => {
     return false;
   }
   
-  // 2. 测试普通API调用
   try {
-    console.log('2. 测试普通API调用...');
-    const response = await httpClient.get('/user/info');
-    console.log('普通API响应状态:', response.status);
+    // 2. 测试普通API请求
+    console.log('2. 测试普通API请求...');
+    const response = await httpClient.get('/user/1');
     
     if (response.status === 401) {
       console.error('❌ JWT认证失败 - 401 Unauthorized');
       return false;
     } else if (response.ok) {
-      console.log('✅ 普通API认证成功');
+      console.log('✅ 普通API请求成功');
     }
-  } catch (error) {
-    console.error('❌ 普通API调用失败:', error);
-  }
-  
-  // 3. 测试聊天流式接口
-  try {
-    console.log('3. 测试聊天流式接口...');
-    const chatResponse = await httpClient.get('/chat/stream', { message: '测试消息' });
-    console.log('聊天接口响应状态:', chatResponse.status);
     
-    if (chatResponse.status === 401) {
-      console.error('❌ 聊天接口JWT认证失败 - 401 Unauthorized');
-      return false;
-    } else if (chatResponse.ok) {
-      console.log('✅ 聊天接口认证成功');
+    // 3. 测试知识库API
+    console.log('3. 测试知识库API...');
+    const chatResponse = await fetchWithAuthJSON(`${BASE_URL}/knowledge/contents?page=0&pageSize=10`);
+    
+    if (chatResponse) {
+      console.log('✅ 知识库API请求成功');
     }
+    
   } catch (error) {
-    console.error('❌ 聊天接口调用失败:', error);
+    console.error('❌ 测试过程中发生错误:', error);
+    return false;
   }
   
   console.log('=== JWT认证测试完成 ===');
   return true;
 };
 
+// 测试过期token处理
+export const testExpiredToken = async () => {
+  console.log('=== 过期Token测试开始 ===');
+  
+  // 设置一个明显过期的token
+  const expiredToken = 'eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjEsImV4cCI6MTYwOTQ1OTIwMH0.expired';
+  localStorage.setItem('token', expiredToken);
+  
+  try {
+    // 尝试请求需要认证的接口
+    const response = await fetchWithAuthJSON(`${BASE_URL}/knowledge/contents?page=0&pageSize=10`);
+    console.log('❌ 过期token测试失败 - 应该跳转到登录页');
+    return false;
+  } catch (error) {
+    console.log('✅ 过期token正确处理 - 已跳转到登录页');
+    return true;
+  }
+};
+
 // 在浏览器控制台中可以调用的测试函数
 (window as any).testJWT = testJWTAuth;
+(window as any).testExpiredToken = testExpiredToken;

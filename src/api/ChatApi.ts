@@ -1,4 +1,3 @@
-import service from "@/http";
 import { httpClient } from "@/utils/httpClient";
 
 export const ChatApi = {

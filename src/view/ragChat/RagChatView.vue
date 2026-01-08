@@ -44,6 +44,7 @@ import { marked } from 'marked'
 import { Document } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { sendChatMessageApi, sendRagChatMessageApi, type ChatMessage } from '@/api/ChatApi'
+import { fetchWithAuth } from '@/utils/fetchWrapper'
 
 const messages = ref<ChatMessage[]>([])
 const userInput = ref('')
@@ -81,9 +82,29 @@ const sendMessage = async (apiMethod: (message: string) => Promise<Response>) =>
   messages.value.push(assistantMessage)
 
   try {
-    const response = await apiMethod(currentInput)
+    // 构建请求URL
+    const baseUrl = apiMethod === sendChatMessageApi ? '/api/v1/chat/stream' : '/api/v1/ai/rag'
+    const url = `${baseUrl}?message=${encodeURIComponent(currentInput)}`
+    
+    console.log('Requesting URL:', url)
+    
+    // 使用fetch处理流式响应
+    const response = await fetchWithAuth(url, {
+      method: 'GET',
+      headers: {
+        'Accept': 'text/event-stream',
+        'Cache-Control': 'no-cache'
+      }
+    })
+    
+    console.log('API Response:', response)
+    console.log('Response status:', response.status)
+    console.log('Response headers:', response.headers)
+    
     if (!response.ok) {
-      throw new Error('网络请求失败')
+      const errorText = await response.text()
+      console.error('API Error:', errorText)
+      throw new Error(`网络请求失败: ${response.status} - ${errorText}`)
     }
 
     const reader = response.body?.getReader()
@@ -91,21 +112,47 @@ const sendMessage = async (apiMethod: (message: string) => Promise<Response>) =>
       throw new Error('无法读取响应数据')
     }
 
-    const decoder = new TextDecoder()
+    const decoder = new TextDecoder('utf-8')
     assistantMessage.content = ''  // 清空"正在思考中"的文本
+    let buffer = '' // 用于处理跨chunk的数据
 
     while (true) {
       const { value, done } = await reader.read()
       if (done) break
 
-      const text = decoder.decode(value)
-      assistantMessage.content += text
+      const chunk = decoder.decode(value, { stream: true })
+      console.log('Received chunk:', chunk)
+      
+      buffer += chunk
+      const lines = buffer.split('\n')
+      
+      // 保留最后一行（可能不完整）
+      buffer = lines.pop() || ''
+      
+      // 处理完整的行
+      for (const line of lines) {
+        if (line.startsWith('data:')) {
+          const content = line.substring(5).trim() // 移除 "data:" 前缀
+          if (content && content !== '[DONE]' && content !== '') {
+            assistantMessage.content += content
+          }
+        }
+      }
+      
       await nextTick()
       scrollToBottom()
     }
+    
+    // 处理剩余的buffer
+    if (buffer.startsWith('data:')) {
+      const content = buffer.substring(5).trim()
+      if (content && content !== '[DONE]' && content !== '') {
+        assistantMessage.content += content
+      }
+    }
   } catch (error) {
-    console.error('Error:', error)
-    assistantMessage.content = '抱歉，发生了错误，请稍后重试。'
+    console.error('Error details:', error)
+    assistantMessage.content = `抱歉，发生了错误：${error.message}`
   } finally {
     isLoading.value = false
     assistantMessage.isTyping = false
