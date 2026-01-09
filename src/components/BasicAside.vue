@@ -13,7 +13,7 @@
 <!--          <el-image :src="Logo"></el-image>-->
 <!--        </el-icon>-->
         <h1>RAG-AI</h1>
-        <el-text style="color: #bfcbd9" size="small">基于RAG技术的个人知识库AI问答系统</el-text>
+        <el-text style="color: #bfcbd9" size="small">基于RAG技术的知识库AI问答系统</el-text>
       </div>
       <el-divider />
 

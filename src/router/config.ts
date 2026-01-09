@@ -41,12 +41,12 @@ let routes = [
     },
   },
   {
-    path: "/know-hub",
-    name: "knowHub",
-    component: () => import("@/view/know/KnowHubView.vue"),
+    path: "/knowledge-management",
+    name: "knowledgeManagement",
+    component: () => import("@/view/knowledge/KnowledgeManagementView.vue"),
     meta: {
       isMenu: true,
-      description: "我的知识库",
+      description: "知识库管理",
       icon: "Collection",
       requiresAuth: true,
     },

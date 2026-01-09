@@ -54,7 +54,7 @@ export const testExpiredToken = async () => {
   
   try {
     // 尝试请求需要认证的接口
-    const response = await fetchWithAuthJSON(`${BASE_URL}/knowledge/contents?page=0&pageSize=10`);
+    await fetchWithAuthJSON(`${BASE_URL}/knowledge/contents?page=0&pageSize=10`);
     console.log('❌ 过期token测试失败 - 应该跳转到登录页');
     return false;
   } catch (error) {

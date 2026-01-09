@@ -8,6 +8,10 @@ export {}
 declare module 'vue' {
   export interface GlobalComponents {
     BasicAside: typeof import('./components/BasicAside.vue')['default']
+    CreateKnowledgeBaseDialog: typeof import('./components/knowledge/CreateKnowledgeBaseDialog.vue')['default']
+    KnowledgeBaseDetailDrawer: typeof import('./components/knowledge/KnowledgeBaseDetailDrawer.vue')['default']
+    KnowledgeBaseGrid: typeof import('./components/knowledge/KnowledgeBaseGrid.vue')['default']
+    KnowledgeBaseSelector: typeof import('./components/knowledge/KnowledgeBaseSelector.vue')['default']
     MDView: typeof import('./components/MDView.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']

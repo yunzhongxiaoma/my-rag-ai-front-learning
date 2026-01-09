@@ -294,7 +294,7 @@ const batchDelete = () => {
     type: "warning",
   })
     .then(() => {
-      const ids = selectedFiles.value.map(file => file.id).join(',')
+      const ids = selectedFiles.value.map(file => file.id)
       deleteFileApi({
         ids: ids,
       })
@@ -325,7 +325,7 @@ const batchDelete = () => {
 const batchDownload = () => {
   if (selectedFiles.value.length === 0) return
 
-  const ids = selectedFiles.value.map(file => file.id).join(',')
+  const ids = selectedFiles.value.map(file => file.id)
   downloadFileApi({
     ids: ids,
   })

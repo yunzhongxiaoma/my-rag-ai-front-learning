@@ -1,5 +1,6 @@
 import { httpClient } from "@/utils/httpClient";
 import { fetchWithAuthJSON } from "@/utils/fetchWrapper";
+import { BASE_URL } from "@/http/config";
 
 export const ChatApi = {
   Chat: "/chat/stream",
@@ -52,6 +53,39 @@ export const sendChatMessageApi = async (message: string): Promise<Response> => 
   return httpClient.get(ChatApi.Chat, { message });
 };
 
+// 发送RAG消息接口（支持知识库ID列表）
+export const sendRagChatMessageWithKnowledgeBasesApi = async (
+  message: string, 
+  knowledgeBaseIds?: number[]
+): Promise<Response> => {
+  const params = new URLSearchParams();
+  params.append('message', message);
+  
+  if (knowledgeBaseIds && knowledgeBaseIds.length > 0) {
+    knowledgeBaseIds.forEach(id => {
+      params.append('knowledgeBaseIds', id.toString());
+    });
+  }
+  
+  const url = `${BASE_URL}${ChatApi.RagChat}?${params.toString()}`;
+  
+  const token = localStorage.getItem('token');
+  const headers: Record<string, string> = {
+    'Accept': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive'
+  };
+  
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  
+  return fetch(url, {
+    method: 'GET',
+    headers
+  });
+};
+
 // 发送RAG消息接口
 export const sendRagChatMessageApi = async (message: string): Promise<Response> => {
   return httpClient.get(ChatApi.RagChat, { message });
@@ -65,7 +99,7 @@ export const getChatHistoryApi = async (sessionId?: string, limit: number = 50):
   }
   params.append('limit', limit.toString());
   
-  const url = `/api/v1${ChatApi.History}?${params.toString()}`;
+  const url = `${BASE_URL}${ChatApi.History}?${params.toString()}`;
   const response = await fetchWithAuthJSON(url);
   
   if (response.code === 0) {
@@ -77,7 +111,7 @@ export const getChatHistoryApi = async (sessionId?: string, limit: number = 50):
 
 // 获取会话列表
 export const getChatSessionsApi = async (): Promise<ChatSessionVO[]> => {
-  const url = `/api/v1${ChatApi.Sessions}`;
+  const url = `${BASE_URL}${ChatApi.Sessions}`;
   const response = await fetchWithAuthJSON(url);
   
   if (response.code === 0) {

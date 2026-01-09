@@ -228,7 +228,7 @@ const passwordRules: FormRules = {
     { required: true, message: '请再次输入新密码', trigger: 'blur' },
     { min: 5, max: 20, message: '密码长度在 5 到 20 个字符', trigger: 'blur' },
     {
-      validator: (rule, value, callback) => {
+      validator: (_rule: any, value: string, callback: (error?: Error) => void) => {
         if (value !== passwordForm.newPassword) {
           callback(new Error('两次输入的密码不一致'))
         } else {

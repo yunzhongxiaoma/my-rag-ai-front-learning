@@ -1,6 +1,20 @@
 <template>
   <div class="chat-container">
     <el-card class="box-card">
+      <!-- 知识库选择区域 -->
+      <div class="knowledge-base-selection">
+        <div class="selection-header">
+          <h4>选择知识库</h4>
+          <el-tooltip content="选择要用于问答的知识库，支持多选">
+            <el-icon><QuestionFilled /></el-icon>
+          </el-tooltip>
+        </div>
+        <KnowledgeBaseSelector 
+          v-model="selectedKnowledgeBases"
+          @change="handleKnowledgeBaseChange"
+        />
+      </div>
+      
       <!-- 历史记录加载状态 -->
       <div v-if="isLoadingHistory" class="loading-history">
         <el-icon class="is-loading"><Loading /></el-icon>
@@ -42,7 +56,14 @@
         </el-button>
         <el-button type="warning" @click="clearMessages">清空对话</el-button>
         <el-button type="primary" @click="handleSend" :loading="isLoading">普通回答</el-button>
-        <el-button type="primary" @click="handleRagSend" :loading="isLoading">RAG回答</el-button>
+        <el-button 
+          type="primary" 
+          @click="handleRagSend" 
+          :loading="isLoading"
+          :disabled="selectedKnowledgeBases.length === 0"
+        >
+          RAG回答 ({{ selectedKnowledgeBases.length }}个知识库)
+        </el-button>
       </div>
     </el-card>
   </div>
@@ -51,16 +72,20 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick, watch } from 'vue'
 import { marked } from 'marked'
-import { Document, Loading, Refresh } from '@element-plus/icons-vue'
+import { Document, Loading, Refresh, QuestionFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { 
   sendChatMessageApi, 
-  sendRagChatMessageApi, 
+  sendRagChatMessageWithKnowledgeBasesApi,
   getChatHistoryApi,
   type ChatMessage,
-  type ChatMessageVO 
+  type ChatMessageVO,
+  ChatApi
 } from '@/api/ChatApi'
 import { fetchWithAuth } from '@/utils/fetchWrapper'
+import { BASE_URL } from '@/http/config'
+import KnowledgeBaseSelector from '@/components/knowledge/KnowledgeBaseSelector.vue'
+import type { KnowledgeBase } from '@/api/KnowledgeBaseApi'
 
 const messages = ref<ChatMessage[]>([])
 const userInput = ref('')
@@ -68,6 +93,10 @@ const isLoading = ref(false)
 const isLoadingHistory = ref(false)
 const messageContainer = ref<HTMLElement | null>(null)
 const currentSessionId = ref<string | null>(null)
+
+// 知识库选择相关
+const selectedKnowledgeBases = ref<number[]>([])
+const selectedKnowledgeBaseDetails = ref<KnowledgeBase[]>([])
 
 // 消息持久化相关
 const MESSAGES_STORAGE_KEY = 'rag-chat-messages'
@@ -179,6 +208,11 @@ watch(messages, () => {
 // 定期自动保存
 setInterval(saveMessagesToStorage, AUTO_SAVE_INTERVAL)
 
+// 处理知识库选择变化
+const handleKnowledgeBaseChange = (kbs: KnowledgeBase[]) => {
+  selectedKnowledgeBaseDetails.value = kbs
+}
+
 // 处理普通对话
 const handleSend = async () => {
   if (!userInput.value.trim() || isLoading.value) return
@@ -188,7 +222,173 @@ const handleSend = async () => {
 // 处理RAG对话
 const handleRagSend = async () => {
   if (!userInput.value.trim() || isLoading.value) return
-  await sendMessage(sendRagChatMessageApi)
+  
+  if (selectedKnowledgeBases.value.length === 0) {
+    ElMessage.warning('请先选择知识库')
+    return
+  }
+  
+  await sendRagMessage(userInput.value.trim(), selectedKnowledgeBases.value)
+}
+
+// 发送RAG消息的专用方法
+const sendRagMessage = async (message: string, knowledgeBaseIds: number[]) => {
+  if (!message.trim() || isLoading.value) return
+
+  // 添加用户消息
+  const userMessage: ChatMessage = {
+    role: 'user',
+    content: message.trim()
+  }
+  messages.value.push(userMessage)
+
+  userInput.value = ''
+  isLoading.value = true
+
+  // 添加AI消息占位符
+  const assistantMessage: ChatMessage = {
+    role: 'assistant',
+    content: '',
+    isTyping: true
+  }
+  messages.value.push(assistantMessage)
+
+  // 消息备份，用于错误恢复
+  let accumulatedContent = ''
+  let retryCount = 0
+  const maxRetries = 3
+
+  const processRagStream = async (): Promise<void> => {
+    try {
+      console.log('发送RAG请求，知识库ID:', knowledgeBaseIds)
+      
+      // 使用新的RAG API函数
+      const response = await sendRagChatMessageWithKnowledgeBasesApi(message, knowledgeBaseIds)
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('RAG API错误:', errorText)
+        throw new Error(`网络请求失败: ${response.status} - ${errorText}`)
+      }
+
+      const reader = response.body?.getReader()
+      if (!reader) {
+        throw new Error('无法读取响应数据流')
+      }
+
+      const decoder = new TextDecoder('utf-8')
+      assistantMessage.content = '' // 清空占位符文本
+      let buffer = '' // 用于处理跨chunk的数据
+      let lastUpdateTime = Date.now()
+
+      try {
+        while (true) {
+          const { value, done } = await reader.read()
+          if (done) {
+            console.log('RAG流式响应完成，总内容长度:', accumulatedContent.length)
+            break
+          }
+
+          const chunk = decoder.decode(value, { stream: true })
+          buffer += chunk
+          
+          // 按行分割处理
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || '' // 保留最后一行（可能不完整）
+          
+          // 处理完整的行
+          for (const line of lines) {
+            const trimmedLine = line.trim()
+            if (trimmedLine.startsWith('data:')) {
+              const content = trimmedLine.substring(5).trim()
+              if (content && content !== '[DONE]' && content !== 'null') {
+                try {
+                  // 尝试解析JSON格式的数据
+                  const parsedContent = content.startsWith('{') ? JSON.parse(content).content || content : content
+                  assistantMessage.content += parsedContent
+                  accumulatedContent += parsedContent
+                } catch (parseError) {
+                  // 如果不是JSON，直接添加内容
+                  assistantMessage.content += content
+                  accumulatedContent += content
+                }
+              }
+            }
+          }
+          
+          // 定期更新UI（避免过于频繁的DOM更新）
+          const now = Date.now()
+          if (now - lastUpdateTime > 50) { // 每50ms最多更新一次
+            await nextTick()
+            scrollToBottom()
+            lastUpdateTime = now
+          }
+        }
+        
+        // 处理剩余的buffer
+        if (buffer.trim().startsWith('data:')) {
+          const content = buffer.trim().substring(5).trim()
+          if (content && content !== '[DONE]' && content !== 'null') {
+            try {
+              const parsedContent = content.startsWith('{') ? JSON.parse(content).content || content : content
+              assistantMessage.content += parsedContent
+              accumulatedContent += parsedContent
+            } catch (parseError) {
+              assistantMessage.content += content
+              accumulatedContent += content
+            }
+          }
+        }
+
+      } finally {
+        reader.releaseLock()
+      }
+
+    } catch (error: unknown) {
+      console.error('RAG流式处理错误:', error)
+      
+      // 重试机制
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      const errorName = error instanceof Error ? error.name : 'UnknownError'
+      
+      if (retryCount < maxRetries && (errorName === 'NetworkError' || errorMessage.includes('网络'))) {
+        retryCount++
+        console.log(`网络错误，正在重试 (${retryCount}/${maxRetries})...`)
+        await new Promise(resolve => setTimeout(resolve, 1000 * retryCount)) // 递增延迟
+        return processRagStream()
+      }
+      
+      // 如果有部分内容，保留它
+      if (accumulatedContent) {
+        assistantMessage.content = accumulatedContent + '\n\n[连接中断，部分内容可能丢失]'
+      } else {
+        assistantMessage.content = `抱歉，发生了错误：${errorMessage}`
+      }
+      throw error
+    }
+  }
+
+  try {
+    await processRagStream()
+    
+    // 确保最终内容不为空
+    if (!assistantMessage.content.trim()) {
+      assistantMessage.content = '抱歉，没有收到有效的响应内容。'
+    }
+    
+  } catch (error) {
+    console.error('RAG消息发送失败:', error)
+    // 错误已在processRagStream中处理
+  } finally {
+    isLoading.value = false
+    assistantMessage.isTyping = false
+    
+    // 最终更新UI
+    await nextTick()
+    scrollToBottom()
+    
+    console.log('RAG消息处理完成，最终内容长度:', assistantMessage.content.length)
+  }
 }
 
 // 发送消息通用方法
@@ -222,7 +422,7 @@ const sendMessage = async (apiMethod: (message: string) => Promise<Response>) =>
   const processStream = async (): Promise<void> => {
     try {
       // 构建请求URL，包含会话ID
-      const baseUrl = apiMethod === sendChatMessageApi ? '/api/v1/chat/stream' : '/api/v1/ai/rag'
+      const baseUrl = apiMethod === sendChatMessageApi ? ChatApi.Chat : ChatApi.RagChat
       const params = new URLSearchParams()
       params.append('message', currentInput)
       
@@ -231,7 +431,7 @@ const sendMessage = async (apiMethod: (message: string) => Promise<Response>) =>
         params.append('sessionId', currentSessionId.value)
       }
       
-      const url = `${baseUrl}?${params.toString()}`
+      const url = `${BASE_URL}${baseUrl}?${params.toString()}`
       
       console.log('发送请求到:', url)
       
@@ -324,11 +524,14 @@ const sendMessage = async (apiMethod: (message: string) => Promise<Response>) =>
         reader.releaseLock()
       }
 
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('流式处理错误:', error)
       
       // 重试机制
-      if (retryCount < maxRetries && (error.name === 'NetworkError' || error.message.includes('网络'))) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      const errorName = error instanceof Error ? error.name : 'UnknownError'
+      
+      if (retryCount < maxRetries && (errorName === 'NetworkError' || errorMessage.includes('网络'))) {
         retryCount++
         console.log(`网络错误，正在重试 (${retryCount}/${maxRetries})...`)
         await new Promise(resolve => setTimeout(resolve, 1000 * retryCount)) // 递增延迟
@@ -339,7 +542,7 @@ const sendMessage = async (apiMethod: (message: string) => Promise<Response>) =>
       if (accumulatedContent) {
         assistantMessage.content = accumulatedContent + '\n\n[连接中断，部分内容可能丢失]'
       } else {
-        assistantMessage.content = `抱歉，发生了错误：${error.message}`
+        assistantMessage.content = `抱歉，发生了错误：${errorMessage}`
       }
       throw error
     }
@@ -485,6 +688,32 @@ onMounted(async () => {
       flex-direction: column;
       padding: 20px;
       overflow: hidden;
+    }
+  }
+}
+
+.knowledge-base-selection {
+  margin-bottom: 20px;
+  padding: 20px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  
+  .selection-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 15px;
+    
+    h4 {
+      margin: 0;
+      color: #303133;
+      font-size: 16px;
+      font-weight: 600;
+    }
+    
+    .el-icon {
+      color: #909399;
+      cursor: help;
     }
   }
 }

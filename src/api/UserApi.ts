@@ -1,5 +1,6 @@
 import service from "@/http";
 import {QueryFileDto} from "@/api/dto.ts";
+import type { ApiResponse } from './data'
 type Res = any;
 export const UserApi = {
   QueryPage: "/user/page",
@@ -54,6 +55,6 @@ export const updateUserApi = async (data: UpdateUserDto): Promise<Res> => {
 };
 
 // 修改密码
-export const updatePasswordApi = async (data: UpdatePasswordDto) => {
+export const updatePasswordApi = async (data: UpdatePasswordDto): Promise<ApiResponse<string>> => {
   return service.post(UserApi.UpdatePassword, data);
 };

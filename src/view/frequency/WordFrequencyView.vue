@@ -58,7 +58,13 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts'
 import 'echarts-wordcloud'
-import { queryFrequencyApi, cleanFrequencyApi, listFrequencyApi } from '@/api/FrequencyApi'
+import { cleanFrequencyApi, listFrequencyApi } from '@/api/FrequencyApi'
+
+// 定义词频数据类型
+interface FrequencyItem {
+  name: string
+  value: number
+}
 
 // 图表引用
 const wordCloudRef = ref<HTMLElement | null>(null)
@@ -202,7 +208,7 @@ const loadWordFrequencyData = async () => {
 
       const pieData = frequencyRanges.map(range => ({
         name: range.name,
-        value: data.filter(item => item.value >= range.min && item.value < range.max).length
+        value: data.filter((item: FrequencyItem) => item.value >= range.min && item.value < range.max).length
       }))
 
       const pieOption = {
@@ -259,8 +265,8 @@ const loadWordFrequencyData = async () => {
           name: word,
           type: 'line',
           data: Array(7).fill(null).map(() => 
-            Math.floor(data.find(item => item.name === word)?.value * Math.random() * 0.5 + 
-              data.find(item => item.name === word)?.value * 0.5)
+            Math.floor((data.find((item: FrequencyItem) => item.name === word)?.value || 0) * Math.random() * 0.5 + 
+              (data.find((item: FrequencyItem) => item.name === word)?.value || 0) * 0.5)
           )
         }))
       }
