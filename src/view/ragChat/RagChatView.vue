@@ -1,6 +1,12 @@
 <template>
   <div class="chat-container">
     <el-card class="box-card">
+      <!-- 历史记录加载状态 -->
+      <div v-if="isLoadingHistory" class="loading-history">
+        <el-icon class="is-loading"><Loading /></el-icon>
+        <span>正在加载聊天历史...</span>
+      </div>
+      
       <div class="chat-messages" ref="messageContainer">
         <div v-for="(message, index) in messages" :key="index" 
              :class="['message', message.role === 'user' ? 'user-message' : 'assistant-message']">
@@ -30,6 +36,10 @@
       </div>
 
       <div class="button-group">
+        <el-button type="info" @click="refreshHistory" :loading="isLoadingHistory">
+          <el-icon><Refresh /></el-icon>
+          刷新历史
+        </el-button>
         <el-button type="warning" @click="clearMessages">清空对话</el-button>
         <el-button type="primary" @click="handleSend" :loading="isLoading">普通回答</el-button>
         <el-button type="primary" @click="handleRagSend" :loading="isLoading">RAG回答</el-button>
@@ -39,17 +49,135 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, onMounted, nextTick, watch } from 'vue'
 import { marked } from 'marked'
-import { Document } from '@element-plus/icons-vue'
+import { Document, Loading, Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { sendChatMessageApi, sendRagChatMessageApi, type ChatMessage } from '@/api/ChatApi'
+import { 
+  sendChatMessageApi, 
+  sendRagChatMessageApi, 
+  getChatHistoryApi,
+  type ChatMessage,
+  type ChatMessageVO 
+} from '@/api/ChatApi'
 import { fetchWithAuth } from '@/utils/fetchWrapper'
 
 const messages = ref<ChatMessage[]>([])
 const userInput = ref('')
 const isLoading = ref(false)
+const isLoadingHistory = ref(false)
 const messageContainer = ref<HTMLElement | null>(null)
+const currentSessionId = ref<string | null>(null)
+
+// 消息持久化相关
+const MESSAGES_STORAGE_KEY = 'rag-chat-messages'
+const SESSION_STORAGE_KEY = 'rag-chat-session-id'
+const AUTO_SAVE_INTERVAL = 5000 // 5秒自动保存一次
+
+// 将后端消息VO转换为前端消息格式
+const convertVOToMessage = (vo: ChatMessageVO): ChatMessage => {
+  return {
+    role: vo.messageType === 'USER' ? 'user' : 'assistant',
+    content: vo.content,
+    id: vo.id,
+    createTime: vo.createTime
+  }
+}
+
+// 从后端加载聊天历史
+const loadChatHistoryFromServer = async () => {
+  if (isLoadingHistory.value) return
+  
+  isLoadingHistory.value = true
+  try {
+    console.log('正在从服务器加载聊天历史...')
+    
+    // 获取保存的会话ID
+    const savedSessionId = localStorage.getItem(SESSION_STORAGE_KEY)
+    
+    // 调用后端接口获取历史记录
+    const historyData = await getChatHistoryApi(savedSessionId || undefined, 100)
+    
+    if (historyData && historyData.length > 0) {
+      // 转换为前端消息格式
+      const historyMessages = historyData.map(convertVOToMessage)
+      messages.value = historyMessages
+      
+      // 保存会话ID
+      if (historyData[0]?.sessionId) {
+        currentSessionId.value = historyData[0].sessionId
+        localStorage.setItem(SESSION_STORAGE_KEY, historyData[0].sessionId)
+      }
+      
+      console.log(`成功加载 ${historyMessages.length} 条历史消息`)
+      
+      // 滚动到底部
+      await nextTick()
+      scrollToBottom()
+      
+      return true
+    } else {
+      console.log('没有找到历史消息，使用默认欢迎消息')
+      return false
+    }
+  } catch (error) {
+    console.warn('从服务器加载聊天历史失败:', error)
+    ElMessage({
+      message: '加载聊天历史失败，将显示本地缓存',
+      type: 'warning',
+      duration: 3000
+    })
+    return false
+  } finally {
+    isLoadingHistory.value = false
+  }
+}
+
+// 加载本地保存的消息（作为备用方案）
+const loadMessagesFromStorage = () => {
+  try {
+    const savedMessages = localStorage.getItem(MESSAGES_STORAGE_KEY)
+    if (savedMessages) {
+      const parsedMessages = JSON.parse(savedMessages)
+      if (Array.isArray(parsedMessages) && parsedMessages.length > 0) {
+        messages.value = parsedMessages
+        console.log(`从本地存储加载 ${parsedMessages.length} 条消息`)
+        return true
+      }
+    }
+  } catch (error) {
+    console.warn('加载本地消息失败:', error)
+  }
+  return false
+}
+
+// 设置默认欢迎消息
+const setDefaultWelcomeMessage = () => {
+  messages.value = [{
+    role: 'assistant',
+    content: '你好！我是AI助手，请问有什么可以帮助你的吗？'
+  }]
+}
+
+// 保存消息到本地存储
+const saveMessagesToStorage = () => {
+  try {
+    localStorage.setItem(MESSAGES_STORAGE_KEY, JSON.stringify(messages.value))
+    if (currentSessionId.value) {
+      localStorage.setItem(SESSION_STORAGE_KEY, currentSessionId.value)
+    }
+  } catch (error) {
+    console.warn('保存消息到本地存储失败:', error)
+  }
+}
+
+// 监听消息变化，自动保存
+watch(messages, () => {
+  saveMessagesToStorage()
+}, { deep: true })
+
+// 定期自动保存
+setInterval(saveMessagesToStorage, AUTO_SAVE_INTERVAL)
 
 // 处理普通对话
 const handleSend = async () => {
@@ -65,97 +193,178 @@ const handleRagSend = async () => {
 
 // 发送消息通用方法
 const sendMessage = async (apiMethod: (message: string) => Promise<Response>) => {
-  messages.value.push({
-    role: 'user',
-    content: userInput.value
-  })
+  if (!userInput.value.trim() || isLoading.value) return
 
-  const currentInput = userInput.value
+  // 添加用户消息
+  const userMessage: ChatMessage = {
+    role: 'user',
+    content: userInput.value.trim()
+  }
+  messages.value.push(userMessage)
+
+  const currentInput = userInput.value.trim()
   userInput.value = ''
   isLoading.value = true
 
+  // 添加AI消息占位符
   const assistantMessage: ChatMessage = {
     role: 'assistant',
-    content: '正在思考中...',
+    content: '',
     isTyping: true
   }
   messages.value.push(assistantMessage)
 
-  try {
-    // 构建请求URL
-    const baseUrl = apiMethod === sendChatMessageApi ? '/api/v1/chat/stream' : '/api/v1/ai/rag'
-    const url = `${baseUrl}?message=${encodeURIComponent(currentInput)}`
-    
-    console.log('Requesting URL:', url)
-    
-    // 使用fetch处理流式响应
-    const response = await fetchWithAuth(url, {
-      method: 'GET',
-      headers: {
-        'Accept': 'text/event-stream',
-        'Cache-Control': 'no-cache'
+  // 消息备份，用于错误恢复
+  let accumulatedContent = ''
+  let retryCount = 0
+  const maxRetries = 3
+
+  const processStream = async (): Promise<void> => {
+    try {
+      // 构建请求URL，包含会话ID
+      const baseUrl = apiMethod === sendChatMessageApi ? '/api/v1/chat/stream' : '/api/v1/ai/rag'
+      const params = new URLSearchParams()
+      params.append('message', currentInput)
+      
+      // 如果有当前会话ID，添加到请求参数中
+      if (currentSessionId.value) {
+        params.append('sessionId', currentSessionId.value)
       }
-    })
-    
-    console.log('API Response:', response)
-    console.log('Response status:', response.status)
-    console.log('Response headers:', response.headers)
-    
-    if (!response.ok) {
-      const errorText = await response.text()
-      console.error('API Error:', errorText)
-      throw new Error(`网络请求失败: ${response.status} - ${errorText}`)
-    }
-
-    const reader = response.body?.getReader()
-    if (!reader) {
-      throw new Error('无法读取响应数据')
-    }
-
-    const decoder = new TextDecoder('utf-8')
-    assistantMessage.content = ''  // 清空"正在思考中"的文本
-    let buffer = '' // 用于处理跨chunk的数据
-
-    while (true) {
-      const { value, done } = await reader.read()
-      if (done) break
-
-      const chunk = decoder.decode(value, { stream: true })
-      console.log('Received chunk:', chunk)
       
-      buffer += chunk
-      const lines = buffer.split('\n')
+      const url = `${baseUrl}?${params.toString()}`
       
-      // 保留最后一行（可能不完整）
-      buffer = lines.pop() || ''
+      console.log('发送请求到:', url)
       
-      // 处理完整的行
-      for (const line of lines) {
-        if (line.startsWith('data:')) {
-          const content = line.substring(5).trim() // 移除 "data:" 前缀
-          if (content && content !== '[DONE]' && content !== '') {
-            assistantMessage.content += content
+      // 使用fetch处理流式响应
+      const response = await fetchWithAuth(url, {
+        method: 'GET',
+        headers: {
+          'Accept': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive'
+        }
+      })
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('API错误:', errorText)
+        throw new Error(`网络请求失败: ${response.status} - ${errorText}`)
+      }
+
+      const reader = response.body?.getReader()
+      if (!reader) {
+        throw new Error('无法读取响应数据流')
+      }
+
+      const decoder = new TextDecoder('utf-8')
+      assistantMessage.content = '' // 清空占位符文本
+      let buffer = '' // 用于处理跨chunk的数据
+      let lastUpdateTime = Date.now()
+
+      try {
+        while (true) {
+          const { value, done } = await reader.read()
+          if (done) {
+            console.log('流式响应完成，总内容长度:', accumulatedContent.length)
+            break
+          }
+
+          const chunk = decoder.decode(value, { stream: true })
+          buffer += chunk
+          
+          // 按行分割处理
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || '' // 保留最后一行（可能不完整）
+          
+          // 处理完整的行
+          for (const line of lines) {
+            const trimmedLine = line.trim()
+            if (trimmedLine.startsWith('data:')) {
+              const content = trimmedLine.substring(5).trim()
+              if (content && content !== '[DONE]' && content !== 'null') {
+                try {
+                  // 尝试解析JSON格式的数据
+                  const parsedContent = content.startsWith('{') ? JSON.parse(content).content || content : content
+                  assistantMessage.content += parsedContent
+                  accumulatedContent += parsedContent
+                } catch (parseError) {
+                  // 如果不是JSON，直接添加内容
+                  assistantMessage.content += content
+                  accumulatedContent += content
+                }
+              }
+            }
+          }
+          
+          // 定期更新UI（避免过于频繁的DOM更新）
+          const now = Date.now()
+          if (now - lastUpdateTime > 50) { // 每50ms最多更新一次
+            await nextTick()
+            scrollToBottom()
+            lastUpdateTime = now
           }
         }
+        
+        // 处理剩余的buffer
+        if (buffer.trim().startsWith('data:')) {
+          const content = buffer.trim().substring(5).trim()
+          if (content && content !== '[DONE]' && content !== 'null') {
+            try {
+              const parsedContent = content.startsWith('{') ? JSON.parse(content).content || content : content
+              assistantMessage.content += parsedContent
+              accumulatedContent += parsedContent
+            } catch (parseError) {
+              assistantMessage.content += content
+              accumulatedContent += content
+            }
+          }
+        }
+
+      } finally {
+        reader.releaseLock()
+      }
+
+    } catch (error) {
+      console.error('流式处理错误:', error)
+      
+      // 重试机制
+      if (retryCount < maxRetries && (error.name === 'NetworkError' || error.message.includes('网络'))) {
+        retryCount++
+        console.log(`网络错误，正在重试 (${retryCount}/${maxRetries})...`)
+        await new Promise(resolve => setTimeout(resolve, 1000 * retryCount)) // 递增延迟
+        return processStream()
       }
       
-      await nextTick()
-      scrollToBottom()
+      // 如果有部分内容，保留它
+      if (accumulatedContent) {
+        assistantMessage.content = accumulatedContent + '\n\n[连接中断，部分内容可能丢失]'
+      } else {
+        assistantMessage.content = `抱歉，发生了错误：${error.message}`
+      }
+      throw error
+    }
+  }
+
+  try {
+    await processStream()
+    
+    // 确保最终内容不为空
+    if (!assistantMessage.content.trim()) {
+      assistantMessage.content = '抱歉，没有收到有效的响应内容。'
     }
     
-    // 处理剩余的buffer
-    if (buffer.startsWith('data:')) {
-      const content = buffer.substring(5).trim()
-      if (content && content !== '[DONE]' && content !== '') {
-        assistantMessage.content += content
-      }
-    }
   } catch (error) {
-    console.error('Error details:', error)
-    assistantMessage.content = `抱歉，发生了错误：${error.message}`
+    console.error('消息发送失败:', error)
+    // 错误已在processStream中处理
   } finally {
     isLoading.value = false
     assistantMessage.isTyping = false
+    
+    // 最终更新UI
+    await nextTick()
+    scrollToBottom()
+    
+    console.log('消息处理完成，最终内容长度:', assistantMessage.content.length)
   }
 }
 
@@ -184,12 +393,43 @@ const copyMessage = async (content: string) => {
   }
 }
 
+// 手动刷新历史记录
+const refreshHistory = async () => {
+  console.log('手动刷新聊天历史...')
+  const historyLoaded = await loadChatHistoryFromServer()
+  
+  if (historyLoaded) {
+    ElMessage({
+      message: '历史记录刷新成功',
+      type: 'success',
+      duration: 2000
+    })
+  } else {
+    ElMessage({
+      message: '暂无历史记录',
+      type: 'info',
+      duration: 2000
+    })
+  }
+}
+
 // 清空对话
 const clearMessages = () => {
   messages.value = [{
     role: 'assistant',
     content: '你好！我是AI助手，请问有什么可以帮助你的吗？'
   }]
+  
+  // 清空本地存储和会话信息
+  localStorage.removeItem(MESSAGES_STORAGE_KEY)
+  localStorage.removeItem(SESSION_STORAGE_KEY)
+  currentSessionId.value = null
+  
+  ElMessage({
+    message: '对话已清空',
+    type: 'success',
+    duration: 2000
+  })
 }
 
 // Markdown渲染
@@ -205,11 +445,25 @@ const renderMarkdown = (content: string) => {
   }
 }
 
-onMounted(() => {
-  messages.value.push({
-    role: 'assistant',
-    content: '你好！我是AI助手，请问有什么可以帮助你的吗？'
-  })
+onMounted(async () => {
+  console.log('RAG聊天组件初始化...')
+  
+  // 优先尝试从服务器加载聊天历史
+  const serverHistoryLoaded = await loadChatHistoryFromServer()
+  
+  if (!serverHistoryLoaded) {
+    // 如果服务器没有历史记录，尝试加载本地缓存
+    const localHistoryLoaded = loadMessagesFromStorage()
+    
+    if (!localHistoryLoaded) {
+      // 如果本地也没有，设置默认欢迎消息
+      setDefaultWelcomeMessage()
+    }
+  }
+  
+  // 滚动到底部
+  await nextTick()
+  scrollToBottom()
 })
 </script>
 
@@ -232,6 +486,20 @@ onMounted(() => {
       padding: 20px;
       overflow: hidden;
     }
+  }
+}
+
+.loading-history {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  color: #909399;
+  font-size: 14px;
+  gap: 8px;
+  
+  .el-icon {
+    font-size: 16px;
   }
 }
 
